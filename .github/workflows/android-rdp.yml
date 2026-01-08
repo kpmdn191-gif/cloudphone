@@ -1,0 +1,61 @@
+name: Android Emulator RDP (6 hours)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Install Desktop & XRDP
+        run: |
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies xrdp dbus-x11
+          echo xfce4-session > ~/.xsession
+          sudo adduser xrdp ssl-cert
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+
+      - name: Create RDP User
+        run: |
+          sudo useradd -m android
+          echo "android:android" | sudo chpasswd
+          sudo usermod -aG sudo android
+
+      - name: Install Android SDK & Emulator
+        run: |
+          sudo apt install -y wget unzip
+          mkdir -p $HOME/android-sdk
+          cd $HOME/android-sdk
+
+          wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip *.zip
+          mkdir -p cmdline-tools/latest
+          mv cmdline-tools/* cmdline-tools/latest || true
+
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH
+
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-30" "emulator" \
+                     "system-images;android-30;google_apis;x86_64"
+
+          avdmanager create avd -n cloudemu \
+            -k "system-images;android-30;google_apis;x86_64" --device pixel
+
+      - name: Start Emulator (GUI)
+        run: |
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH
+          nohup emulator -avd cloudemu -gpu swiftshader_indirect -no-snapshot &
+
+      - name: Install Cloudflared
+        run: |
+          wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
+      - name: Start Cloudflared Tunnel (RDP)
+        run: |
+          cloudflared tunnel run --token ${{ secrets.CLOUDFLARED_TOKEN }}
